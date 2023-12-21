@@ -7,5 +7,9 @@ edition = "2021"
 
 [dependencies]
 actix-web = "4.4.0"
+anyhow = "1.0.76"
+hex = "0.4.3"
+hmac = "0.12.1"
 serde = "1.0.193"
 serde_json = "1.0.108"
+sha2 = "0.10.8"

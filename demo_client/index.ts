@@ -7,14 +7,14 @@ const TABLE_NAME_2 = 'test_table_two'
 async function main() {
   console.log("Running client test...")
   const client = new DynamoDBClient({
-    endpoint: "http://127.0.0.1:8080",
+    endpoint: "http://localhost:8080",
     credentials: {
       accessKeyId: 'testuser',
       secretAccessKey: 'testpassword'
     }
   })
   const documentClient = DynamoDBDocument.from(new DynamoDB({
-    endpoint: "http://127.0.0.1:8080",
+    endpoint: "http://localhost:8080",
     credentials: {
       accessKeyId: 'testuser',
       secretAccessKey: 'testpassword'

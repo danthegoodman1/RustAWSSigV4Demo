@@ -24,11 +24,13 @@ async fn main() -> std::io::Result<()> {
 
 
 const MAX_SIZE: usize = 262_144; // max payload size is 256k
+type HmacSha256 = Hmac<Sha256>;
 
 fn get_hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
-    let mut hasher: CoreWrapper<HmacCore<&[u8]>> = Hmac::new_from_slice(key).expect("HMAC can take key of any size");
-    hasher.update(data);
-    hasher.finalize().into_bytes().to_vec()
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC can take key of any size");
+    mac.update(data);
+    let result = mac.finalize();
+    result.into_bytes().to_vec()
 }
 
 fn get_sha256(data: &[u8]) -> Vec<u8> {
@@ -95,7 +97,7 @@ fn get_canonical_request(req: &HttpRequest) -> Result<String, Error> {
 
     // Extract signed headers from Authorization
     let signed_headers: BTreeMap<_, _> = if let Some(auth_header) = req.headers().get("Authorization") {
-        auth_header.to_str()?.split(", ")
+        auth_header.to_str().expect("failed to parse auth header to string").split(", ")
             .find_map(|item| {
                 if item.starts_with("SignedHeaders=") {
                     let headers = item.trim_start_matches("SignedHeaders=").replace(",", ";");
@@ -167,10 +169,10 @@ async fn index_manual(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse
     let canonical_request = get_canonical_request(&req)?;
     let string_to_sign = get_string_to_sign(&req, canonical_request.as_str());
     let signing_key = get_signing_key(&req);
-    let signature = format!("{:x?}", signing_key);
+    let signature = hex::encode(get_hmac(signing_key.as_slice(), string_to_sign.as_bytes()));
     let provided_signature = extract_provided_signature(&req).unwrap();
-    println!("{}", provided_signature);
-    println!("{}", signature);
+    println!("prov: {}", provided_signature);
+    println!("mine: {}", signature);
 
     // body is loaded, now we can deserialize serde-json
     match str::from_utf8(&body) {

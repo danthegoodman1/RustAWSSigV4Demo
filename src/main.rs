@@ -30,6 +30,14 @@ fn get_hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
     mac.update(data);
     let result = mac.finalize();
     result.into_bytes().to_vec()
+    // -> anyhow::Result(Vec<u8>) {
+    // let mut mac = match HmacSha256::new_from_slice(key) {
+    //     Ok(m) => m,
+    //     Err(e) => anyhow::anyhow!(e).context("HMAC can take key of any size")
+    // };
+    // mac.update(data);
+    // let result = mac.finalize();
+    // Ok(result.into_bytes().to_vec())
 }
 
 fn get_sha256(data: &[u8]) -> Vec<u8> {

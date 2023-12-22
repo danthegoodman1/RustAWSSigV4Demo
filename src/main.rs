@@ -1,12 +1,11 @@
 use std::collections::BTreeMap;
-use actix_web::{App, error, Error, HttpRequest, HttpResponse, HttpServer, web};
-use actix_web::http::StatusCode;
-use std::str;
-use anyhow;
-use hmac::{Hmac, HmacCore, Mac};
-use sha2::{Sha256, Digest};
 use std::fmt::Write;
-use hmac::digest::core_api::CoreWrapper;
+use std::str;
+
+use actix_web::{App, Error, HttpRequest, HttpResponse, HttpServer, web};
+use anyhow;
+use hmac::{Hmac, Mac};
+use sha2::{Digest, Sha256};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {

@@ -17,6 +17,8 @@ async fn main() -> std::io::Result<()> {
             .route("/", web::get().to(proxy_request))
             .route("/", web::post().to(proxy_request))
             .default_service(web::route().to(catch_all))
+            // See https://github.com/actix/examples/tree/master/middleware/request-extensions for how to add middleware
+            // and include data
     })
         .bind(("0.0.0.0", 8080))?
         .bind(("::1", 8080))?

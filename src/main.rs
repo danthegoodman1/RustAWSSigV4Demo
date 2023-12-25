@@ -207,13 +207,13 @@ async fn catch_all(req: HttpRequest) -> Result<HttpResponse, Error> {
 }
 
 async fn proxy_request(req: HttpRequest, body: web::Payload, client: web::Data<Client>) -> Result<HttpResponse, Error> {
-    // let canonical_request = get_canonical_request(&req)?;
-    // let string_to_sign = get_string_to_sign(&req, canonical_request.as_str());
-    // let signing_key = get_signing_key(&req);
-    // let signature = hex::encode(get_hmac(signing_key.as_slice(), string_to_sign.as_bytes()));
-    // let provided_signature = extract_provided_signature(&req).unwrap();
-    // println!("prov: {}", provided_signature);
-    // println!("mine: {}", signature);
+    let canonical_request = get_canonical_request(&req)?;
+    let string_to_sign = get_string_to_sign(&req, canonical_request.as_str());
+    let signing_key = get_signing_key(&req);
+    let signature = hex::encode(get_hmac(signing_key.as_slice(), string_to_sign.as_bytes()));
+    let provided_signature = extract_provided_signature(&req).unwrap();
+    println!("prov: {}", provided_signature);
+    println!("mine: {}", signature);
 
     // Define the URL you want to proxy to
     let url = "https://httpbin.org/anything";
@@ -225,10 +225,7 @@ async fn proxy_request(req: HttpRequest, body: web::Payload, client: web::Data<C
 
     // Copy headers from the incoming request
     for (header_name, header_value) in req.headers() {
-        // Ignore host header
-        if header_name == "host" {
-            continue;
-        }
+        // println!("Copying header {} {}", header_name, header_value.to_str().unwrap());
         origin_req = origin_req.insert_header((header_name.clone(), header_value.clone()));
     }
 
@@ -240,6 +237,7 @@ async fn proxy_request(req: HttpRequest, body: web::Payload, client: web::Data<C
 
     let mut client_response = HttpResponse::build(response.status());
     for (header_name, header_value) in response.headers() {
+        // println!("Copying header {} {}", header_name, header_value.to_str().unwrap());
         client_response.append_header((header_name.clone(), header_value.clone()));
     }
 

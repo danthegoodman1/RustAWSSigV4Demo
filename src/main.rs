@@ -7,6 +7,7 @@ use anyhow;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use awc::{Client};
+use awc::cookie::time::format_description::parse;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -90,7 +91,63 @@ fn get_signing_key(req: &HttpRequest) -> Vec<u8> {
     signing_key
 }
 
-fn get_canonical_request(req: &HttpRequest) -> Result<String, Error> {
+struct AWSAuthHeaderCredential {
+    key_id: String,
+    date: String,
+    region: String,
+    service: String,
+    request: String,
+}
+
+struct AWSAuthHeader {
+    credential:    AWSAuthHeaderCredential,
+    signed_headers: Vec<String>,
+    signature:     String,
+}
+
+fn get_aws_auth_header(req: &HttpRequest) -> Result<AWSAuthHeader, Error> {
+    let mut auth_header = AWSAuthHeader{
+        signature: String::new(),
+        credential: AWSAuthHeaderCredential{
+            date: String::new(),
+            key_id: String::new(),
+            region: String::new(),
+            request: String::new(),
+            service: String::new(),
+        },
+        signed_headers: Vec::new(),
+    };
+
+    // Extract signed headers from Authorization
+    if let Some(header_name) = req.headers().get("Authorization") {
+        header_name.to_str().expect("failed to parse auth header to string").split(" ")
+            .for_each(|item| {
+                let item = item.trim_end_matches(",");
+                if item.starts_with("SignedHeaders=") {
+                    let headers = item.trim_start_matches("SignedHeaders=").replace(",", ";");
+                    auth_header.signed_headers = headers.split(';').map(str::to_string).collect()
+                }
+                if item.starts_with("Credential=") {
+                    let credential_parts: Vec<String> = item.trim_start_matches("SignedHeaders=").split("/").map(str::to_string).collect();
+                    auth_header.credential = AWSAuthHeaderCredential{
+                        key_id: credential_parts[0].clone(),
+                        date: credential_parts[1].clone(),
+                        region: credential_parts[2].clone(),
+                        service: credential_parts[3].clone(),
+                        request: credential_parts[4].clone()
+                    }
+                }
+                if item.starts_with("Signature=") {
+                    auth_header.signature = String::from(item.trim_start_matches("SignedHeaders="))
+                }
+
+            })
+    }
+
+    Ok(auth_header)
+}
+
+fn get_canonical_request(req: &HttpRequest, auth_header: AWSAuthHeader) -> Result<String, Error> {
     let mut canonical_request = String::new();
 
     // Add HTTP method
@@ -106,38 +163,11 @@ fn get_canonical_request(req: &HttpRequest) -> Result<String, Error> {
     canonical_request.push_str(query_string);
     canonical_request.push('\n');
 
-    // Extract signed headers from Authorization
-    let signed_headers: BTreeMap<_, _> = if let Some(auth_header) = req.headers().get("Authorization") {
-        auth_header.to_str().expect("failed to parse auth header to string").split(", ")
-            .find_map(|item| {
-                if item.starts_with("SignedHeaders=") {
-                    let headers = item.trim_start_matches("SignedHeaders=").replace(",", ";");
-                    let header_list: Vec<_> = headers.split(';').collect();
-                    let mut signed_header_values = BTreeMap::new();
-
-                    // Iterate over signed headers and insert header names and values into the map
-                    for header_name in header_list {
-                        if req.headers().contains_key(header_name) {
-                            let value = req.headers().get(header_name).unwrap().to_str().unwrap_or_default().trim().to_owned();
-                            signed_header_values.insert(header_name.to_lowercase(), value);
-                        }
-                    }
-
-                    Some(signed_header_values)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default()
-    } else {
-        BTreeMap::new()
-    };
-
     // Add headers to canonical request
-    for (header_name, header_value) in &signed_headers {
+    for header_name in &auth_header.signed_headers {
         canonical_request.push_str(header_name);
         canonical_request.push(':');
-        canonical_request.push_str(header_value);
+        canonical_request.push_str(req.headers().get(header_name).unwrap().to_str().unwrap()); // this feels cursed
         canonical_request.push('\n');
     }
 
@@ -145,7 +175,7 @@ fn get_canonical_request(req: &HttpRequest) -> Result<String, Error> {
     canonical_request.push('\n');
 
     // Add signed headers names
-    canonical_request.push_str(&signed_headers.keys().cloned().collect::<Vec<_>>().join(";"));
+    canonical_request.push_str(&auth_header.signed_headers.join(";"));
     canonical_request.push('\n');
 
     // Handle 'x-amz-content-sha256' header
@@ -176,7 +206,8 @@ fn extract_provided_signature(req: &HttpRequest) -> Option<String> {
 }
 
 async fn index_manual(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse, Error> {
-    let canonical_request = get_canonical_request(&req)?;
+    let parsed_auth_header = get_aws_auth_header(&req)?;
+    let canonical_request = get_canonical_request(&req, parsed_auth_header)?;
     let string_to_sign = get_string_to_sign(&req, canonical_request.as_str());
     let signing_key = get_signing_key(&req);
     let signature = hex::encode(get_hmac(signing_key.as_slice(), string_to_sign.as_bytes()));
@@ -207,7 +238,8 @@ async fn catch_all(req: HttpRequest) -> Result<HttpResponse, Error> {
 }
 
 async fn proxy_request(req: HttpRequest, body: web::Payload, client: web::Data<Client>) -> Result<HttpResponse, Error> {
-    let canonical_request = get_canonical_request(&req)?;
+    let parsed_auth_header = get_aws_auth_header(&req)?;
+    let canonical_request = get_canonical_request(&req, parsed_auth_header)?;
     let string_to_sign = get_string_to_sign(&req, canonical_request.as_str());
     let signing_key = get_signing_key(&req);
     let signature = hex::encode(get_hmac(signing_key.as_slice(), string_to_sign.as_bytes()));

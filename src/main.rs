@@ -6,13 +6,15 @@ use actix_web::{App, Error, HttpRequest, HttpResponse, HttpServer, web};
 use anyhow;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
+use awc::{Client};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     HttpServer::new(|| {
         App::new()
-            .route("/", web::get().to(index_manual))
-            .route("/", web::post().to(index_manual))
+            .app_data(web::Data::new(Client::default()))
+            .route("/", web::get().to(proxy_request))
+            .route("/", web::post().to(proxy_request))
             .default_service(web::route().to(catch_all))
     })
         .bind(("0.0.0.0", 8080))?
@@ -22,7 +24,9 @@ async fn main() -> std::io::Result<()> {
 }
 
 
-const MAX_SIZE: usize = 262_144; // max payload size is 256k
+const MAX_SIZE: usize = 262_144;
+
+// max payload size is 256k
 type HmacSha256 = Hmac<Sha256>;
 
 fn get_hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
@@ -147,7 +151,7 @@ fn get_canonical_request(req: &HttpRequest) -> Result<String, Error> {
     // Handle 'x-amz-content-sha256' header
     let sha_header = req.headers().get("x-amz-content-sha256").map_or_else(
         || "UNSIGNED-PAYLOAD".to_string(),
-        |h| h.to_str().unwrap_or("UNSIGNED-PAYLOAD").to_owned()
+        |h| h.to_str().unwrap_or("UNSIGNED-PAYLOAD").to_owned(),
     );
 
     // Add the 'x-amz-content-sha256' value
@@ -172,7 +176,6 @@ fn extract_provided_signature(req: &HttpRequest) -> Option<String> {
 }
 
 async fn index_manual(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse, Error> {
-
     let canonical_request = get_canonical_request(&req)?;
     let string_to_sign = get_string_to_sign(&req, canonical_request.as_str());
     let signing_key = get_signing_key(&req);
@@ -201,4 +204,45 @@ async fn catch_all(req: HttpRequest) -> Result<HttpResponse, Error> {
         .collect::<Vec<_>>().join("\n"));
     Ok(HttpResponse::NotFound().body("not found boi"))
     // Ok(HttpResponse::Ok().status(StatusCode::from_u16(404).unwrap()).body("route not found"))
+}
+
+async fn proxy_request(req: HttpRequest, body: web::Payload, client: web::Data<Client>) -> Result<HttpResponse, Error> {
+    // let canonical_request = get_canonical_request(&req)?;
+    // let string_to_sign = get_string_to_sign(&req, canonical_request.as_str());
+    // let signing_key = get_signing_key(&req);
+    // let signature = hex::encode(get_hmac(signing_key.as_slice(), string_to_sign.as_bytes()));
+    // let provided_signature = extract_provided_signature(&req).unwrap();
+    // println!("prov: {}", provided_signature);
+    // println!("mine: {}", signature);
+
+    // Define the URL you want to proxy to
+    let url = "https://httpbin.org/anything";
+
+    // Create the client request using the awc client
+    let mut origin_req = client
+        .request_from(url, req.head())
+        .no_decompress(); // Disable auto-decompression
+
+    // Copy headers from the incoming request
+    for (header_name, header_value) in req.headers() {
+        // Ignore host header
+        if header_name == "host" {
+            continue;
+        }
+        origin_req = origin_req.insert_header((header_name.clone(), header_value.clone()));
+    }
+
+    // Send the client request and wait for the response
+    let mut response = origin_req
+        .send_stream(body)
+        .await
+        .map_err(actix_web::error::ErrorServiceUnavailable)?;
+
+    let mut client_response = HttpResponse::build(response.status());
+    for (header_name, header_value) in response.headers() {
+        client_response.append_header((header_name.clone(), header_value.clone()));
+    }
+
+    // Use the streaming body from the response.
+    Ok(client_response.streaming(response))
 }
